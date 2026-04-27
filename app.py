@@ -19,7 +19,7 @@ TWILIO_NUMBER = os.environ.get("+19783545896")
 
 BOT_URL = f"https://api.telegram.org/bot8671100191:AAGnjEeOD4LUgQJiVzNj79-nWhdnh2neh90"
 
-client = Client(ACd39155611dc69a0f0b049a178e61a5ec, aabbc52cd1ed16e8efbbc3d55fcff8dd)
+client = Client("ACd39155611dc69a0f0b049a178e61a5ec"," aabbc52cd1ed16e8efbbc3d55fcff8dd")
 
 # =========================
 # DB INIT
@@ -49,7 +49,7 @@ user_state = {}
 # TELEGRAM SEND
 # =========================
 def send_telegram(chat_id, text):
-    requests.post(f"{BOT_URL}/sendMessage", data={
+    requests.post(f"{https://simplebot-2cgu.onrender.com/telegram}/sendMessage", data={
         "chat_id": chat_id,
         "text": text
     })
