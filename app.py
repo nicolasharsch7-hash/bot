@@ -8,18 +8,18 @@ from twilio.twiml.voice_response import VoiceResponse, Gather
 app = Flask(__name__)
 
 # =========================
-# CONFIG (USA VARIABLES ENV EN PRODUCCIÓN)
+# CONFIG (CORREGIDO)
 # =========================
-TELEGRAM_TOKEN = os.environ.get("8671100191:AAGnjEeOD4LUgQJiVzNj79-nWhdnh2neh90")
-ADMIN_CHAT_ID = os.environ.get("8225742299")
+TELEGRAM_TOKEN = "8671100191:AAGnjEeOD4LUgQJiVzNj79-nWhdnh2neh90"
+ADMIN_CHAT_ID = "8225742299"
 
-TWILIO_SID = os.environ.get("ACd39155611dc69a0f0b049a178e61a5ec")
-TWILIO_AUTH = os.environ.get("aabbc52cd1ed16e8efbbc3d55fcff8dd")
-TWILIO_NUMBER = os.environ.get("+19783545896")
+TWILIO_SID = "ACd39155611dc69a0f0b049a178e61a5ec"
+TWILIO_AUTH = "aabbc52cd1ed16e8efbbc3d55fcff8dd"
+TWILIO_NUMBER = "+19783545896"
 
-BOT_URL = f"https://api.telegram.org/bot8671100191:AAGnjEeOD4LUgQJiVzNj79-nWhdnh2neh90"
+BOT_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-client = Client("ACd39155611dc69a0f0b049a178e61a5ec", "aabbc52cd1ed16e8efbbc3d55fcff8dd")
+client = Client(TWILIO_SID, TWILIO_AUTH)
 
 # =========================
 # DB INIT
@@ -41,7 +41,7 @@ def init_db():
 init_db()
 
 # =========================
-# MEMORY SIMPLE (estado usuario)
+# MEMORY SIMPLE
 # =========================
 user_state = {}
 
@@ -49,7 +49,7 @@ user_state = {}
 # TELEGRAM SEND
 # =========================
 def send_telegram(chat_id, text):
-    requests.post(f"{https://simplebot-2cgu.onrender.com/telegram}/sendMessage", data={
+    requests.post(f"{BOT_URL}/sendMessage", data={
         "chat_id": chat_id,
         "text": text
     })
@@ -61,7 +61,7 @@ def make_call(number):
     try:
         call = client.calls.create(
             to=number,
-            from_=+19783545896,
+            from_=TWILIO_NUMBER,
             url="https://simplebot-2cgu.onrender.com/call"
         )
         print("CALL SID:", call.sid)
@@ -84,7 +84,6 @@ def telegram():
     text = msg.get("text", "").strip()
     chat_id = str(msg["chat"]["id"])
 
-    # START FLOW
     if text == "/start":
         user_state[chat_id] = {"step": "phone"}
 
@@ -93,10 +92,9 @@ def telegram():
         )
         return "ok", 200
 
-    # STEP 1: phone number
     if chat_id in user_state and user_state[chat_id]["step"] == "phone":
         user_state[chat_id]["phone"] = text
-        user_state[chat_id]["step"] = "customer"
+        user_state[chat_id]["step"] = "done"
 
         ok = make_call(text)
 
@@ -162,7 +160,6 @@ def save():
     rating = request.form.get("Digits")
     phone = request.form.get("From")
 
-    # SAVE DB
     conn = sqlite3.connect("data.db")
     c = conn.cursor()
     c.execute(
@@ -172,7 +169,6 @@ def save():
     conn.commit()
     conn.close()
 
-    # SEND TO ADMIN TELEGRAM
     send_telegram(ADMIN_CHAT_ID,
         f"📞 NUEVA LLAMADA\n\n"
         f"📱 {phone}\n"
@@ -184,6 +180,13 @@ def save():
     response.say("Gracias. Su respuesta fue registrada.", language="es-ES")
 
     return str(response)
+
+# =========================
+# WEBHOOK FIX (IMPORTANTE)
+# =========================
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    return "OK", 200
 
 # =========================
 # HOME
