@@ -1,52 +1,42 @@
 import os
 import requests
-import sqlite3
-from flask import Flask, request
+from flask import Flask, request, Response
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Gather
 
 app = Flask(__name__)
 
 # =========================
-# CONFIG (CORREGIDO)
+# 🔐 CONFIG (EDITAR SOLO AQUÍ)
 # =========================
+
 TELEGRAM_TOKEN = "8671100191:AAGnjEeOD4LUgQJiVzNj79-nWhdnh2neh90"
+# ↑ Pegá EXACTAMENTE tu token entre comillas
+
 ADMIN_CHAT_ID = "8225742299"
+# ↑ Este ya está bien, no lo cambies si es tuyo
 
 TWILIO_SID = "ACd39155611dc69a0f0b049a178e61a5ec"
+# ↑ Empieza con AC...
+
 TWILIO_AUTH = "aabbc52cd1ed16e8efbbc3d55fcff8dd"
+# ↑ Token secreto de Twilio
+
 TWILIO_NUMBER = "+19783545896"
+# ↑ Tu número de Twilio (déjalo así si es el tuyo)
+
+BASE_URL = "https://simplebot-2cgu.onrender.com"
+# ↑ Tu URL de Render (NO cambiar si es esa)
+
+# =========================
+# ⚙️ NO TOCAR DESDE AQUÍ
+# =========================
 
 BOT_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-
 client = Client(TWILIO_SID, TWILIO_AUTH)
 
 # =========================
-# DB INIT
-# =========================
-def init_db():
-    conn = sqlite3.connect("data.db")
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS reviews (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            phone TEXT,
-            customer_id TEXT,
-            rating TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# =========================
-# MEMORY SIMPLE
-# =========================
-user_state = {}
-
-# =========================
-# TELEGRAM SEND
+# TELEGRAM
 # =========================
 def send_telegram(chat_id, text):
     requests.post(f"{BOT_URL}/sendMessage", data={
@@ -55,24 +45,25 @@ def send_telegram(chat_id, text):
     })
 
 # =========================
-# TWILIO CALL
+# LLAMADA
 # =========================
 def make_call(number):
     try:
         call = client.calls.create(
             to=number,
             from_=TWILIO_NUMBER,
-            url="https://simplebot-2cgu.onrender.com/call"
+            url=f"{BASE_URL}/call",
+            method="POST"
         )
-        print("CALL SID:", call.sid)
-        return True
+        return f"📞 Llamando...\nSID: {call.sid}"
     except Exception as e:
-        print("CALL ERROR:", e)
-        return False
+        return f"❌ Error:\n{str(e)}"
 
 # =========================
 # TELEGRAM WEBHOOK
 # =========================
+user_state = {}
+
 @app.route("/telegram", methods=["POST"])
 def telegram():
     data = request.get_json()
@@ -86,107 +77,74 @@ def telegram():
 
     if text == "/start":
         user_state[chat_id] = {"step": "phone"}
-
-        send_telegram(chat_id,
-            "👋 Bienvenido\n\nEnvía el número a llamar (formato +549...):"
-        )
+        send_telegram(chat_id, "Envía el número (+549...)")
         return "ok", 200
 
     if chat_id in user_state and user_state[chat_id]["step"] == "phone":
-        user_state[chat_id]["phone"] = text
-        user_state[chat_id]["step"] = "done"
-
-        ok = make_call(text)
-
-        if ok:
-            send_telegram(chat_id, f"📞 Llamando a {text}")
-        else:
-            send_telegram(chat_id, "❌ Error al iniciar llamada")
-
+        result = make_call(text)
+        send_telegram(chat_id, result)
         return "ok", 200
 
-    send_telegram(chat_id, "Escribe /start para comenzar.")
     return "ok", 200
 
 # =========================
-# TWILIO CALL FLOW
+# FLUJO TWILIO
 # =========================
-@app.route("/call", methods=["POST"])
+@app.route("/call", methods=["GET", "POST"])
 def call():
-    response = VoiceResponse()
+    vr = VoiceResponse()
 
     gather = Gather(
         input="dtmf",
         num_digits=6,
-        action="/rating",
+        action=f"{BASE_URL}/rating",
+        method="POST",
         timeout=10
     )
 
     gather.say("Ingrese su número de cliente.", language="es-ES")
-    response.append(gather)
+    vr.append(gather)
 
-    response.redirect("/call")
-    return str(response)
+    vr.redirect(f"{BASE_URL}/call", method="POST")
 
-# =========================
-# RATING STEP
-# =========================
-@app.route("/rating", methods=["POST"])
+    return Response(str(vr), mimetype="text/xml")
+
+@app.route("/rating", methods=["GET", "POST"])
 def rating():
     customer_id = request.form.get("Digits", "")
 
-    response = VoiceResponse()
+    vr = VoiceResponse()
 
     gather = Gather(
         input="dtmf",
         num_digits=1,
-        action=f"/save?customer_id={customer_id}",
+        action=f"{BASE_URL}/save?customer_id={customer_id}",
+        method="POST",
         timeout=10
     )
 
-    gather.say("Califique del 1 al 5.", language="es-ES")
+    gather.say("Califique del uno al cinco.", language="es-ES")
+    vr.append(gather)
 
-    response.append(gather)
-    response.redirect(f"/rating?customer_id={customer_id}")
+    vr.redirect(f"{BASE_URL}/rating?customer_id={customer_id}", method="POST")
 
-    return str(response)
+    return Response(str(vr), mimetype="text/xml")
 
-# =========================
-# SAVE RESULT
-# =========================
-@app.route("/save", methods=["POST"])
+@app.route("/save", methods=["GET", "POST"])
 def save():
     customer_id = request.args.get("customer_id")
     rating = request.form.get("Digits")
     phone = request.form.get("From")
 
-    conn = sqlite3.connect("data.db")
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO reviews (phone, customer_id, rating) VALUES (?, ?, ?)",
-        (phone, customer_id, rating)
-    )
-    conn.commit()
-    conn.close()
-
-    send_telegram(ADMIN_CHAT_ID,
-        f"📞 NUEVA LLAMADA\n\n"
-        f"📱 {phone}\n"
-        f"🧾 Cliente: {customer_id}\n"
-        f"⭐ Rating: {rating}"
+    send_telegram(
+        ADMIN_CHAT_ID,
+        f"📞 {phone}\n🧾 Cliente: {customer_id}\n⭐ Rating: {rating}"
     )
 
-    response = VoiceResponse()
-    response.say("Gracias. Su respuesta fue registrada.", language="es-ES")
+    vr = VoiceResponse()
+    vr.say("Gracias. Su respuesta fue registrada.", language="es-ES")
 
-    return str(response)
-
-# =========================
-# WEBHOOK FIX (IMPORTANTE)
-# =========================
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    return "OK", 200
+    return Response(str(vr), mimetype="text/xml")
 
 # =========================
 # HOME
