@@ -19,7 +19,7 @@ ADMIN_CHAT_ID = "8225742299"
 TWILIO_SID = "ACd39155611dc69a0f0b049a178e61a5ec"
 # ↑ Empieza con AC...
 
-TWILIO_AUTH = "aabbc52cd1ed16e8efbbc3d55fcff8dd"
+TWILIO_AUTH = "f8189d7b2b187d72be3f19351de3e0aa"
 # ↑ Token secreto de Twilio
 
 TWILIO_NUMBER = "+19783545896"
